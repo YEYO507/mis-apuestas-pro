@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 
 # Configuración de página
 st.set_page_config(page_title="Control de Apuestas", layout="wide")
@@ -102,3 +103,54 @@ if st.session_state.historial:
     # Mostramos la tabla. Nota: Se invierte para ver la más reciente arriba
     df_historial = pd.DataFrame(st.session_state.historial)
     st.table(df_historial.iloc[::-1])
+    # Configuración
+st.set_page_config(page_title="Control de Apuestas Pro", layout="wide")
+
+# Conexión a Google Sheets
+url = "https://docs.google.com/spreadsheets/d/1Whr5r6tRVzJPcrNJGfJyvecDeP2d0TUb-WuaPn0Rq8I/edit?usp=sharing" # <--- PEGA TU LINK AQUÍ
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Cargar datos existentes
+df_historico = conn.read(spreadsheet=url)
+
+# --- BILLETERA ---
+if 'capital' not in st.session_state:
+    st.session_state.capital = 100.00
+
+with st.sidebar:
+    st.header("💰 Billetera")
+    st.session_state.capital = st.number_input("Saldo ($):", value=float(st.session_state.capital), step=1.0, format="%.2f")
+
+# --- REGISTRO ---
+st.subheader("1️⃣ Registrar Apuesta")
+with st.container(border=True):
+    c1, c2, c3 = st.columns(3)
+    with c1: evento = st.text_input("Evento:")
+    with c2: monto = st.number_input("Monto ($):", min_value=0.0, format="%.2f")
+    with c3: cuota = st.number_input("Cuota:", min_value=1.0, format="%.2f")
+    
+    if st.button("🚀 Guardar Pendiente", use_container_width=True):
+        if evento and monto > 0:
+            st.session_state.pendientes = st.session_state.get('pendientes', [])
+            st.session_state.pendientes.append({"Evento": evento, "Monto": monto, "Cuota": cuota})
+            st.rerun()
+
+# --- RESOLVER Y GUARDAR ---
+if st.session_state.get('pendientes'):
+    for i, ap in enumerate(st.session_state.pendientes):
+        with st.expander(f"⏳ {ap['Evento']}"):
+            col1, col2 = st.columns(2)
+            if col1.button(f"✅ GANÉ", key=f"w_{i}"):
+                # Lógica de guardado en Google Sheets
+                nueva_fila = pd.DataFrame([{
+                    "Evento": ap['Evento'],
+                    "Monto": ap['Monto'],
+                    "Resultado": "✅ GANADA",
+                    "Balance": f"+${(ap['Monto']*ap['Cuota'] - ap['Monto']):.2f}"
+                }])
+                df_final = pd.concat([df_historico, nueva_fila], ignore_index=True)
+                conn.update(spreadsheet=url, data=df_final)
+                st.session_state.pendientes.pop(i)
+                st.success("¡Guardado en la nube!")
+                st.rerun()
+            # (Aquí iría el de perder, similar al de ganar)
