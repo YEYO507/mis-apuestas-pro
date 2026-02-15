@@ -22,26 +22,32 @@ def guardar_registro(evento, monto, cuota, resultado, balance_num, tipo="Apuesta
     df_actual = pd.read_csv(ARCHIVO_DATOS)
     nuevo = pd.DataFrame([{
         "Fecha": datetime.now().strftime("%d/%m %H:%M"),
-        "Evento": evento, "Monto": monto, "Cuota": cuota,
-        "Resultado": resultado, "Balance_Num": balance_num, "Tipo": tipo
+        "Evento": evento, 
+        "Monto": round(float(monto), 2), 
+        "Cuota": round(float(cuota), 2),
+        "Resultado": resultado, 
+        "Balance_Num": round(float(balance_num), 2), 
+        "Tipo": tipo
     }])
     pd.concat([df_actual, nuevo], ignore_index=True).to_csv(ARCHIVO_DATOS, index=False)
 
 def actualizar_pendientes(lista_pendientes):
-    pd.DataFrame(lista_pendientes).to_csv(ARCHIVO_PENDIENTES, index=False)
+    # Guardamos asegurando que los valores numéricos vayan redondeados
+    df_p = pd.DataFrame(lista_pendientes)
+    if not df_p.empty:
+        df_p["mo"] = df_p["mo"].round(2)
+        df_p["cu"] = df_p["cu"].round(2)
+    df_p.to_csv(ARCHIVO_PENDIENTES, index=False)
 
-# --- CÁLCULO DE SALDO DINÁMICO ---
-# El saldo ya no depende de session_state, se calcula sumando el historial
+# --- CARGA DE DATOS ---
 df_hist_lectura = pd.read_csv(ARCHIVO_DATOS)
-saldo_calculado = df_hist_lectura["Balance_Num"].sum()
-
-# Cargar pendientes desde el archivo
+saldo_calculado = round(df_hist_lectura["Balance_Num"].sum(), 2)
 pendientes_guardados = pd.read_csv(ARCHIVO_PENDIENTES).to_dict('records')
 
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.header("💰 Gestión de Fondos")
-    monto_ingreso = st.number_input("Monto a Ingresar ($):", min_value=0.0, step=10.0)
+    monto_ingreso = st.number_input("Monto a Ingresar ($):", min_value=0.0, step=10.0, format="%.2f")
     
     if st.button("➕ Ingresar Capital", use_container_width=True):
         if monto_ingreso > 0:
@@ -71,10 +77,10 @@ with st.container(border=True):
         if enviar:
             if ev and mo > 0:
                 if mo <= saldo_calculado:
-                    # Registrar la salida de dinero inmediatamente en el historial
-                    guardar_registro(ev, mo, cu, "PENDIENTE", -mo, tipo="Apuesta")
-                    # Guardar en la lista de pendientes
-                    pendientes_guardados.append({"ev": ev, "mo": mo, "cu": cu})
+                    # Registrar la salida (negativo)
+                    guardar_registro(ev, mo, cu, "PENDIENTE", -mo)
+                    # Añadir a pendientes
+                    pendientes_guardados.append({"ev": ev, "mo": round(mo, 2), "cu": round(cu, 2)})
                     actualizar_pendientes(pendientes_guardados)
                     st.rerun()
                 else:
@@ -85,21 +91,20 @@ st.subheader("2️⃣ Apuestas Pendientes")
 if not pendientes_guardados:
     st.info("No hay apuestas activas.")
 else:
+    # Usamos una copia para iterar y poder eliminar por índice real
     for i, ap in enumerate(pendientes_guardados):
-        with st.expander(f"⏳ {ap['ev']} | Apostado: ${ap['mo']:.2f}", expanded=True):
+        with st.expander(f"⏳ {ap['ev']} | Apostado: ${ap['mo']:.2f} | Cuota: {ap['cu']:.2f}", expanded=True):
             g, p, can = st.columns(3)
             
             if g.button("✅ GANADA", key=f"win_{i}"):
-                premio_total = ap['mo'] * ap['cu']
-                # En el historial ya restamos el monto al crearla, ahora sumamos el premio total
+                premio_total = round(ap['mo'] * ap['cu'], 2)
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "GANADA", premio_total)
-                pendientes_guardados.pop(i)
-                actualizar_pendientes(pendientes_guardados)
+                pendientes_guardados.pop(i) # Elimina de la lista en memoria
+                actualizar_pendientes(pendientes_guardados) # Sobrescribe el CSV sin esta apuesta
                 st.balloons()
                 st.rerun()
             
             if p.button("❌ PERDIDA", key=f"loss_{i}"):
-                # Ya se restó el monto al crearla, solo actualizamos el historial visualmente
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "PERDIDA", 0)
                 pendientes_guardados.pop(i)
                 actualizar_pendientes(pendientes_guardados)
@@ -107,7 +112,7 @@ else:
                 st.rerun()
 
             if can.button("🔄 Cancelar", key=f"cancel_{i}"):
-                # Devolvemos el dinero al historial
+                # Se devuelve el monto original
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "CANCELADA", ap['mo'])
                 pendientes_guardados.pop(i)
                 actualizar_pendientes(pendientes_guardados)
@@ -118,19 +123,29 @@ st.divider()
 df_hist = pd.read_csv(ARCHIVO_DATOS)
 if not df_hist.empty:
     st.subheader("📊 Resumen de Rendimiento")
-    # Filtrar solo registros finales para la estadística
     ganadas = len(df_hist[df_hist['Resultado'] == 'GANADA'])
     perdidas = len(df_hist[df_hist['Resultado'] == 'PERDIDA'])
     
     m1, m2, m3 = st.columns(3)
     m1.metric("✅ Ganadas", ganadas)
     m2.metric("❌ Perdidas", perdidas)
-    m3.metric("💰 Balance Neto Actual", f"${saldo_calculado:.2f}")
+    m3.metric("💰 Saldo Real", f"${saldo_calculado:.2f}")
 
     def color_rows(row):
         if row.Resultado == 'GANADA': return ['background-color: #2ecc71; color: white'] * len(row)
         if row.Resultado == 'PERDIDA': return ['background-color: #e74c3c; color: white'] * len(row)
         if row.Resultado == 'PENDIENTE': return ['background-color: #f39c12; color: white'] * len(row)
-        return ['background-color: #3498db; color: white'] * len(row)
+        if row.Resultado == 'DEPÓSITO': return ['background-color: #3498db; color: white'] * len(row)
+        return [''] * len(row)
 
-    st.dataframe(df_hist.iloc[::-1].style.apply(color_rows, axis=1), use_container_width=True, hide_index=True)
+    # Formatear el dataframe para mostrar 2 decimales en la tabla
+    df_mostrar = df_hist.iloc[::-1].copy()
+    st.dataframe(
+        df_mostrar.style.apply(color_rows, axis=1).format({
+            "Monto": "{:.2f}",
+            "Cuota": "{:.2f}",
+            "Balance_Num": "{:.2f}"
+        }), 
+        use_container_width=True, 
+        hide_index=True
+    )
