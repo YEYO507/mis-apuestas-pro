@@ -107,7 +107,7 @@ if st.session_state.historial:
 st.set_page_config(page_title="Control de Apuestas Pro", layout="wide")
 
 # Conexión a Google Sheets
-url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTOhb-TqvYp4VbtGOWMdABdShujR2lzL7d2GtvJPs4ni7rSlVE9Sp5NU4o3UmynnVWsH8hXRbsp45ZK/pubhtml" # <--- PEGA TU LINK AQUÍ
+url = "https://docs.google.com/spreadsheets/d/1Whr5r6tRVzJPcrNJGfJyvecDeP2d0TUb-WuaPn0Rq8I/edit?usp=sharing" # <--- PEGA TU LINK AQUÍ
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Cargar datos existentes
@@ -154,3 +154,4 @@ if st.session_state.get('pendientes'):
                 st.success("¡Guardado en la nube!")
                 st.rerun()
             # (Aquí iría el de perder, similar al de ganar)
+
