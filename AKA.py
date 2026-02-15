@@ -1,157 +1,99 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import os
 
-# Configuración de página
-st.set_page_config(page_title="Control de Apuestas", layout="wide")
+# 1. Configuración de Estética y Título
+st.set_page_config(page_title="Gestor de Apuestas Pro", layout="wide")
 
-# Inicializar estados de memoria
+# Archivo de almacenamiento local
+ARCHIVO_DATOS = "historial_apuestas.csv"
+
+# 2. Base de Datos Local (CSV)
+if not os.path.exists(ARCHIVO_DATOS):
+    pd.DataFrame(columns=["Evento", "Monto", "Cuota", "Resultado", "Balance"]).to_csv(ARCHIVO_DATOS, index=False)
+
+def guardar_registro(evento, monto, cuota, resultado, balance):
+    nuevo = pd.DataFrame([[evento, monto, cuota, resultado, balance]], 
+                         columns=["Evento", "Monto", "Cuota", "Resultado", "Balance"])
+    nuevo.to_csv(ARCHIVO_DATOS, mode='a', header=False, index=False)
+
+# 3. Inicializar Estados
 if 'capital' not in st.session_state:
     st.session_state.capital = 100.00
 if 'pendientes' not in st.session_state:
     st.session_state.pendientes = []
-if 'historial' not in st.session_state:
-    st.session_state.historial = []
 
-st.title("🏆 Mi Gestor de Apuestas")
-
-# --- SIDEBAR: BILLETERA EDITABLE ---
+# --- BARRA LATERAL (BILLETERA) ---
 with st.sidebar:
-    st.header("💰 Gestión de Fondos")
-    
-    # Aquí es donde puedes editar el saldo manualmente
-    nuevo_saldo = st.number_input("Editar Saldo Disponible ($):", 
-                                   value=float(st.session_state.capital), 
-                                   step=1.0, 
-                                   format="%.2f")
-    
-    # Actualizamos el estado con lo que escribas
-    st.session_state.capital = nuevo_saldo
-    
-    st.write("---")
-    if st.button("Reiniciar App (Borra Todo)"):
-        st.session_state.pendientes = []
-        st.session_state.historial = []
-        st.session_state.capital = 100.00
+    st.header("💰 Mi Billetera")
+    st.session_state.capital = st.number_input("Saldo Actual ($):", 
+                                               value=float(st.session_state.capital), 
+                                               format="%.2f", key="wallet_fixed")
+    st.divider()
+    if st.button("🗑️ Resetear Historial", use_container_width=True):
+        pd.DataFrame(columns=["Evento", "Monto", "Cuota", "Resultado", "Balance"]).to_csv(ARCHIVO_DATOS, index=False)
         st.rerun()
 
-# --- 1. REGISTRO ---
-st.subheader("1️⃣ Registrar Apuesta")
+st.title("🏆 Dashboard de Control")
+
+# --- PASO 1: REGISTRO (SIN ERRORES DE ID) ---
 with st.container(border=True):
+    st.subheader("1️⃣ Nueva Apuesta")
     c1, c2, c3 = st.columns(3)
-    with c1: evento = st.text_input("Evento:")
-    with c2: monto = st.number_input("Monto a Apostar ($):", min_value=0.0, format="%.2f", key="input_monto")
-    with c3: cuota = st.number_input("Cuota:", min_value=1.0, format="%.2f", key="input_cuota")
+    ev = c1.text_input("Evento / Equipo:", key="f_ev", placeholder="Ej: Real Madrid")
+    mo = c2.number_input("Monto a Invertir ($):", min_value=0.0, format="%.2f", key="f_mo")
+    cu = c3.number_input("Cuota Final:", min_value=1.0, format="%.2f", key="f_cu")
     
-    if st.button("🚀 Guardar Apuesta Pendiente", use_container_width=True):
-        if evento and monto > 0:
-            if monto <= st.session_state.capital:
-                st.session_state.capital -= monto 
-                st.session_state.pendientes.append({"Evento": evento, "Monto": monto, "Cuota": cuota})
-                st.success(f"Apuesta por {evento} guardada.")
+    if st.button("🚀 Registrar Jugada", use_container_width=True):
+        if ev and mo > 0:
+            if mo <= st.session_state.capital:
+                st.session_state.capital -= mo
+                st.session_state.pendientes.append({"ev": ev, "mo": mo, "cu": cu})
                 st.rerun()
             else:
-                st.error("No tienes saldo suficiente en la billetera.")
+                st.error("No tienes suficiente saldo.")
 
-# --- 2. RESOLVER ---
-st.subheader("2️⃣ Resolver Apuestas en Curso")
+# --- PASO 2: APUESTAS ACTIVAS ---
+st.subheader("2️⃣ En Curso")
 if not st.session_state.pendientes:
-    st.info("No hay apuestas pendientes.")
+    st.info("No hay apuestas activas en este momento.")
 else:
     for i, ap in enumerate(st.session_state.pendientes):
-        with st.expander(f"⏳ {ap['Evento']} | Apostado: ${ap['Monto']:.2f}", expanded=True):
-            col_gane, col_perdi, col_can = st.columns(3)
-            
-            # GANÉ: Devuelve el monto + ganancia neta
-            if col_gane.button(f"✅ GANÉ (${(ap['Monto']*ap['Cuota']):.2f})", key=f"win_{i}", use_container_width=True):
-                premio_total = ap['Monto'] * ap['Cuota']
-                st.session_state.capital += premio_total 
-                
-                registro = {
-                    "Evento": ap['Evento'],
-                    "Monto": ap['Monto'],
-                    "Resultado": "✅ GANADA",
-                    "Balance": f"+${(premio_total - ap['Monto']):.2f}"
-                }
-                st.session_state.historial.append(registro)
+        with st.expander(f"⏳ {ap['ev']} | ${ap['mo']:.2f}", expanded=True):
+            g, p, can = st.columns(3)
+            if g.button("✅ GANADA", key=f"w_{i}", use_container_width=True):
+                premio = ap['mo'] * ap['cu']
+                st.session_state.capital += premio
+                guardar_registro(ap['ev'], ap['mo'], ap['cu'], "GANADA", f"+${premio-ap['mo']:.2f}")
                 st.session_state.pendientes.pop(i)
                 st.balloons()
                 st.rerun()
-
-            # PERDÍ: El dinero ya se restó al registrar, así que solo documentamos
-            if col_perdi.button(f"❌ PERDÍ", key=f"loss_{i}", use_container_width=True):
-                registro = {
-                    "Evento": ap['Evento'],
-                    "Monto": ap['Monto'],
-                    "Resultado": "❌ PERDIDA",
-                    "Balance": f"-${ap['Monto']:.2f}"
-                }
-                st.session_state.historial.append(registro)
+            
+            if p.button("❌ PERDIDA", key=f"l_{i}", use_container_width=True):
+                guardar_registro(ap['ev'], ap['mo'], ap['cu'], "PERDIDA", f"-${ap['mo']:.2f}")
                 st.session_state.pendientes.pop(i)
                 st.snow()
                 st.rerun()
-            
-            # CANCELAR: Devuelve el dinero intacto
-            if col_can.button(f"🔄 Cancelar", key=f"can_{i}", use_container_width=True):
-                st.session_state.capital += ap['Monto']
+
+            if can.button("🔄 Cancelar", key=f"c_{i}", use_container_width=True):
+                st.session_state.capital += ap['mo']
                 st.session_state.pendientes.pop(i)
                 st.rerun()
 
-# --- 3. HISTORIAL ---
-st.subheader("📊 Historial de Resultados")
-if st.session_state.historial:
-    # Mostramos la tabla. Nota: Se invierte para ver la más reciente arriba
-    df_historial = pd.DataFrame(st.session_state.historial)
-    st.table(df_historial.iloc[::-1])
-    # Configuración
-st.set_page_config(page_title="Control de Apuestas Pro", layout="wide")
+# --- PASO 3: HISTORIAL CON COLORES ---
+st.subheader("📊 Resumen de Rendimiento")
 
-# Conexión a Google Sheets
-url = "https://docs.google.com/spreadsheets/d/1Whr5r6tRVzJPcrNJGfJyvecDeP2d0TUb-WuaPn0Rq8I/edit?usp=sharing" # <--- PEGA TU LINK AQUÍ
-conn = st.connection("gsheets", type=GSheetsConnection)
+df_hist = pd.read_csv(ARCHIVO_DATOS)
 
-# Cargar datos existentes
-df_historico = conn.read(spreadsheet=url)
+if not df_hist.empty:
+    # Función para aplicar colores a las filas
+    def color_resultado(val):
+        color = '#2ecc71' if val == 'GANADA' else '#e74c3c' # Verde vs Rojo
+        return f'background-color: {color}; color: white; font-weight: bold'
 
-# --- BILLETERA ---
-if 'capital' not in st.session_state:
-    st.session_state.capital = 100.00
-
-with st.sidebar:
-    st.header("💰 Billetera")
-    st.session_state.capital = st.number_input("Saldo ($):", value=float(st.session_state.capital), step=1.0, format="%.2f")
-
-# --- REGISTRO ---
-st.subheader("1️⃣ Registrar Apuesta")
-with st.container(border=True):
-    c1, c2, c3 = st.columns(3)
-    with c1: evento = st.text_input("Evento:")
-    with c2: monto = st.number_input("Monto ($):", min_value=0.0, format="%.2f")
-    with c3: cuota = st.number_input("Cuota:", min_value=1.0, format="%.2f")
+    # Aplicamos el estilo solo a la columna 'Resultado'
+    styled_df = df_hist.iloc[::-1].style.map(color_resultado, subset=['Resultado'])
     
-    if st.button("🚀 Guardar Pendiente", use_container_width=True):
-        if evento and monto > 0:
-            st.session_state.pendientes = st.session_state.get('pendientes', [])
-            st.session_state.pendientes.append({"Evento": evento, "Monto": monto, "Cuota": cuota})
-            st.rerun()
-
-# --- RESOLVER Y GUARDAR ---
-if st.session_state.get('pendientes'):
-    for i, ap in enumerate(st.session_state.pendientes):
-        with st.expander(f"⏳ {ap['Evento']}"):
-            col1, col2 = st.columns(2)
-            if col1.button(f"✅ GANÉ", key=f"w_{i}"):
-                # Lógica de guardado en Google Sheets
-                nueva_fila = pd.DataFrame([{
-                    "Evento": ap['Evento'],
-                    "Monto": ap['Monto'],
-                    "Resultado": "✅ GANADA",
-                    "Balance": f"+${(ap['Monto']*ap['Cuota'] - ap['Monto']):.2f}"
-                }])
-                df_final = pd.concat([df_historico, nueva_fila], ignore_index=True)
-                conn.update(spreadsheet=url, data=df_final)
-                st.session_state.pendientes.pop(i)
-                st.success("¡Guardado en la nube!")
-                st.rerun()
-            # (Aquí iría el de perder, similar al de ganar)
-
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+else:
+    st.write("
