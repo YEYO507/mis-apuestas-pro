@@ -30,12 +30,11 @@ def guardar_registro(evento, monto, cuota, resultado, balance_num, tipo="Apuesta
 
 inicializar_archivos()
 
-# --- CARGA DE DATOS ---
+# --- CARGA Y FILTRADO (PARA QUE NO SUME DOBLE) ---
 try:
     df_base = pd.read_csv(ARCHIVO_DATOS)
-    # Identificar eventos que ya se cerraron
     cerrados = df_base[df_base['Resultado'].isin(['GANADA', 'PERDIDA', 'CANCELADA'])]['Evento'].unique()
-    # Filtrar: No mostrar el 'PENDIENTE' original si el evento ya se cerró
+    # Si la apuesta ya se ganó o perdió, eliminamos el rastro de la fila "PENDIENTE" original
     df_hist = df_base[~((df_base['Resultado'] == 'PENDIENTE') & (df_base['Evento'].isin(cerrados)))]
 except:
     df_hist = pd.DataFrame(columns=["Fecha", "Evento", "Monto", "Cuota", "Resultado", "Balance_Num", "Tipo"])
@@ -59,15 +58,14 @@ with st.sidebar:
     st.divider()
     st.metric("Saldo Disponible", f"${saldo_actual:.2f}")
     
-    # ESTO LIMPIARÁ TU CSV PARA EMPEZAR DE CERO CON LA LÓGICA NUEVA
-    if st.button("🗑️ Resetear Todo (Limpiar CSV)"):
+    if st.button("🗑️ Resetear Todo"):
         pd.DataFrame(columns=["Fecha", "Evento", "Monto", "Cuota", "Resultado", "Balance_Num", "Tipo"]).to_csv(ARCHIVO_DATOS, index=False)
         pd.DataFrame(columns=["ev", "mo", "cu"]).to_csv(ARCHIVO_PENDIENTES, index=False)
         st.rerun()
 
 st.title("🏆 Mi Control de Apuestas")
 
-# --- NUEVA APUESTA ---
+# --- 1. NUEVA APUESTA ---
 with st.container(border=True):
     with st.form("apuesta_form", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
@@ -76,12 +74,13 @@ with st.container(border=True):
         cu = c3.number_input("Cuota:", min_value=1.0, format="%.2f")
         if st.form_submit_button("🚀 Registrar Apuesta"):
             if ev and mo > 0 and mo <= saldo_actual:
+                # AQUÍ RESTAMOS EL CAPITAL
                 guardar_registro(ev, mo, cu, "PENDIENTE", -mo)
                 pendientes.append({"ev": ev, "mo": mo, "cu": cu})
                 pd.DataFrame(pendientes).to_csv(ARCHIVO_PENDIENTES, index=False)
                 st.rerun()
 
-# --- GESTIÓN DE PENDIENTES ---
+# --- 2. GESTIÓN DE PENDIENTES ---
 st.subheader("2️⃣ Apuestas Pendientes")
 if not pendientes:
     st.info("No hay apuestas activas.")
@@ -90,21 +89,25 @@ else:
         with st.expander(f"⏳ {ap['ev']} | ${ap['mo']:.2f}", expanded=True):
             g, p, c = st.columns(3)
             if g.button("✅ GANADA", key=f"g{i}"):
-                # LÓGICA SOLICITADA:
-                # El balance es el PREMIO TOTAL (Capital + Ganancia)
-                # Como ya restamos el capital al inicio, al sumarlo aquí, 
-                # el "Balance Neto" total de la app queda solo en la ganancia.
+                # LÓGICA DE GANANCIA NETA:
+                # Al ganar, registramos el BENEFICIO (Monto * Cuota - Monto) 
+                # MÁS el Monto que ya habíamos restado antes para recuperarlo.
+                # Resultado: Balance_Num = Monto * Cuota
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "GANADA", ap['mo'] * ap['cu'])
                 pendientes.pop(i)
-                pd.DataFrame(pendientes if pendientes else columns=["ev", "mo", "cu"]).to_csv(ARCHIVO_PENDIENTES, index=False)
+                # Corrección del error de sintaxis anterior:
+                df_to_save = pd.DataFrame(pendientes) if pendientes else pd.DataFrame(columns=["ev", "mo", "cu"])
+                df_to_save.to_csv(ARCHIVO_PENDIENTES, index=False)
                 st.rerun()
+            
             if p.button("❌ PERDIDA", key=f"p{i}"):
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "PERDIDA", 0)
                 pendientes.pop(i)
-                pd.DataFrame(pendientes if pendientes else columns=["ev", "mo", "cu"]).to_csv(ARCHIVO_PENDIENTES, index=False)
+                df_to_save = pd.DataFrame(pendientes) if pendientes else pd.DataFrame(columns=["ev", "mo", "cu"])
+                df_to_save.to_csv(ARCHIVO_PENDIENTES, index=False)
                 st.rerun()
 
-# --- HISTORIAL Y GRÁFICO ---
+# --- 3. HISTORIAL ---
 st.divider()
 if not df_hist.empty:
     st.subheader("📊 Evolución de Capital")
@@ -112,8 +115,6 @@ if not df_hist.empty:
     df_grafico['Capital_Total'] = df_grafico['Balance_Num'].cumsum()
     st.line_chart(df_grafico, x="Fecha", y="Capital_Total")
 
-    st.subheader("📝 Historial Detallado")
+    st.subheader("📝 Historial Final")
     st.dataframe(
-        df_hist.iloc[::-1].style.format({"Monto": "{:.2f}", "Cuota": "{:.2f}", "Balance_Num": "{:.2f}"}),
-        use_container_width=True, hide_index=True
-    )
+        df_hist.iloc[::-1].style.format({"Monto": "{:.2f}", "Cuota": "{:.2f}", "Balance_
