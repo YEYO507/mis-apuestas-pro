@@ -35,16 +35,21 @@ def actualizar_pendientes(lista_pendientes):
 
 inicializar_archivos()
 
-# --- CARGA Y LIMPIEZA DE DATOS ---
+# --- CARGA Y FILTRADO DE DATOS ---
 try:
-    df_hist = pd.read_csv(ARCHIVO_DATOS)
-    # Filtro para no duplicar la visualización de la fila pendiente una vez resuelta
-    eventos_finalizados = df_hist[df_hist['Resultado'].isin(['GANADA', 'PERDIDA', 'CANCELADA'])]['Evento'].unique()
-    df_hist_limpio = df_hist[~((df_hist['Resultado'] == 'PENDIENTE') & (df_hist['Evento'].isin(eventos_finalizados)))]
+    df_hist_base = pd.read_csv(ARCHIVO_DATOS)
+    
+    # IMPORTANTE: Para el saldo y el historial, eliminamos la fila "PENDIENTE" 
+    # de un evento si ese mismo evento ya tiene un resultado (GANADA/PERDIDA/CANCELADA)
+    eventos_resueltos = df_hist_base[df_hist_base['Resultado'].isin(['GANADA', 'PERDIDA', 'CANCELADA'])]['Evento'].tolist()
+    
+    # Creamos el dataframe limpio: no incluimos 'PENDIENTE' si el evento ya se resolvió
+    df_hist = df_hist_base[~((df_hist_base['Resultado'] == 'PENDIENTE') & (df_hist_base['Evento'].isin(eventos_resueltos)))]
 except:
-    df_hist_limpio = pd.DataFrame(columns=["Fecha", "Evento", "Monto", "Cuota", "Resultado", "Balance_Num", "Tipo"])
+    df_hist = pd.DataFrame(columns=["Fecha", "Evento", "Monto", "Cuota", "Resultado", "Balance_Num", "Tipo"])
 
-saldo_actual = round(df_hist_limpio["Balance_Num"].sum(), 2)
+# El saldo se calcula sobre el historial limpio
+saldo_actual = round(df_hist["Balance_Num"].sum(), 2) if not df_hist.empty else 0.0
 
 try:
     pendientes = pd.read_csv(ARCHIVO_PENDIENTES).to_dict('records')
@@ -54,7 +59,7 @@ except:
 # --- INTERFAZ LATERAL ---
 with st.sidebar:
     st.header("💰 Gestión de Fondos")
-    monto_ingreso = st.number_input("Monto a Ingresar ($):", min_value=0.0, step=10.0, format="%.2f")
+    monto_ingreso = st.number_input("Monto a Ingresar ($):", min_value=0.0, format="%.2f")
     if st.button("➕ Ingresar Capital", use_container_width=True):
         if monto_ingreso > 0:
             guardar_registro("Depósito Manual", monto_ingreso, 0, "DEPÓSITO", monto_ingreso, tipo="Ingreso")
@@ -70,15 +75,15 @@ with st.sidebar:
 
 st.title("🏆 Mi Control de Apuestas")
 
-# --- REGISTRO DE APUESTAS ---
+# --- 1. REGISTRO ---
 with st.container(border=True):
-    st.subheader("1️⃣ Registrar Nueva Apuesta")
-    with st.form("form_apuesta", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        ev = col1.text_input("Evento:")
-        mo = col2.number_input("Monto ($):", min_value=0.0, format="%.2f")
-        cu = col3.number_input("Cuota:", min_value=1.0, format="%.2f")
-        if st.form_submit_button("🚀 Apostar Ahora", use_container_width=True):
+    st.subheader("1️⃣ Nueva Apuesta")
+    with st.form("f_apuesta", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        ev = c1.text_input("Evento:")
+        mo = c2.number_input("Monto ($):", min_value=0.0, format="%.2f")
+        cu = c3.number_input("Cuota:", min_value=1.0, format="%.2f")
+        if st.form_submit_button("🚀 Registrar", use_container_width=True):
             if ev and mo > 0 and mo <= saldo_actual:
                 guardar_registro(ev, mo, cu, "PENDIENTE", -mo)
                 pendientes.append({"ev": ev, "mo": mo, "cu": cu})
@@ -87,65 +92,65 @@ with st.container(border=True):
             elif mo > saldo_actual:
                 st.error("Saldo insuficiente.")
 
-# --- GESTIÓN DE PENDIENTES ---
-st.subheader("2️⃣ Apuestas en Curso")
+# --- 2. EN CURSO ---
+st.subheader("2️⃣ Apuestas Pendientes")
 if not pendientes:
-    st.info("No hay apuestas pendientes.")
+    st.info("No hay apuestas activas.")
 else:
     for i, ap in enumerate(pendientes):
         with st.expander(f"⏳ {ap['ev']} | ${ap['mo']:.2f}", expanded=True):
-            c1, c2, c3 = st.columns(3)
+            col_g, col_p, col_c = st.columns(3)
             
-            if c1.button("✅ GANADA", key=f"g_{i}"):
-                # LÓGICA: Diferencial = (Monto * Cuota) - Monto
-                ganancia_neta = (ap['mo'] * ap['cu']) - ap['mo']
-                # Se devuelve el monto original + la ganancia neta
-                # Para el balance solo registramos el premio bruto para recuperar el capital + beneficio
-                # Pero como ya restamos el 'mo' al inicio, aquí sumamos el PREMIO TOTAL para que el neto sea correcto
+            if col_g.button("✅ GANADA", key=f"win_{i}"):
+                # LÓGICA DE DIFERENCIAL (GANANCIA NETA)
+                # Si apostaste 5 a cuota 2, el premio es 10. 
+                # Como ya restamos 5 al inicio, para que el saldo suba a 25, 
+                # sumamos los 10 (Premio Bruto). 
+                # El historial mostrará el Balance_Num de la ganancia total recuperada.
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "GANADA", ap['mo'] * ap['cu'])
                 pendientes.pop(i)
                 actualizar_pendientes(pendientes)
                 st.rerun()
                 
-            if c2.button("❌ PERDIDA", key=f"p_{i}"):
-                # El balance es 0 porque el dinero ya se restó al ponerla en PENDIENTE
+            if col_p.button("❌ PERDIDA", key=f"loss_{i}"):
+                # No sumamos nada porque el monto ya se restó al inicio
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "PERDIDA", 0)
                 pendientes.pop(i)
                 actualizar_pendientes(pendientes)
                 st.rerun()
                 
-            if c3.button("🔄 Cancelar", key=f"c_{i}"):
-                # Devolvemos el monto original
+            if col_c.button("🔄 Cancelar", key=f"can_{i}"):
+                # Devolvemos el monto apostado
                 guardar_registro(ap['ev'], ap['mo'], ap['cu'], "CANCELADA", ap['mo'])
                 pendientes.pop(i)
                 actualizar_pendientes(pendientes)
                 st.rerun()
 
-# --- GRÁFICO Y ESTADÍSTICAS ---
+# --- 3. ESTADÍSTICAS Y TABLA ---
 st.divider()
-if not df_hist_limpio.empty:
-    ganadas = len(df_hist_limpio[df_hist_limpio['Resultado'] == 'GANADA'])
-    perdidas = len(df_hist_limpio[df_hist_limpio['Resultado'] == 'PERDIDA'])
+if not df_hist.empty:
+    # Métricas
+    g = len(df_hist[df_hist['Resultado'] == 'GANADA'])
+    p = len(df_hist[df_hist['Resultado'] == 'PERDIDA'])
     
-    m1, m2, m3 = st.columns(3)
-    m1.metric("✅ Ganadas", ganadas)
-    m2.metric("❌ Perdidas", perdidas)
-    efectividad = (ganadas/(ganadas+perdidas)*100) if (ganadas+perdidas)>0 else 0
-    m3.metric("📈 Efectividad", f"{efectividad:.1f}%")
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("✅ Ganadas", g)
+    col_b.metric("❌ Perdidas", p)
+    col_c.metric("💰 Balance Total", f"${saldo_actual:.2f}")
 
-    st.subheader("📊 Evolución del Saldo")
-    df_grafico = df_hist_limpio.copy()
-    df_grafico['Saldo_Acumulado'] = df_grafico['Balance_Num'].cumsum()
-    st.line_chart(df_grafico, x="Fecha", y="Saldo_Acumulado")
+    st.subheader("📊 Gráfico de Rendimiento")
+    df_graf = df_hist.copy()
+    df_graf['Saldo_Evolucion'] = df_graf['Balance_Num'].cumsum()
+    st.line_chart(df_graf, x="Fecha", y="Saldo_Evolucion")
 
-    st.subheader("📝 Historial de Movimientos")
+    st.subheader("📝 Historial Final (Limpio)")
     
-    def color_rows(row):
-        colores = {'GANADA': '#2ecc71', 'PERDIDA': '#e74c3c', 'PENDIENTE': '#f39c12', 'DEPÓSITO': '#3498db'}
-        return [f'background-color: {colores.get(row.Resultado, "")}; color: white'] * len(row)
+    def color_filas(row):
+        color = {'GANADA': '#2ecc71', 'PERDIDA': '#e74c3c', 'PENDIENTE': '#f39c12', 'DEPÓSITO': '#3498db'}
+        return [f'background-color: {color.get(row.Resultado, "")}; color: white'] * len(row)
 
     st.dataframe(
-        df_hist_limpio.iloc[::-1].style.apply(color_rows, axis=1).format({
+        df_hist.iloc[::-1].style.apply(color_filas, axis=1).format({
             "Monto": "{:.2f}", "Cuota": "{:.2f}", "Balance_Num": "{:.2f}"
         }),
         use_container_width=True, hide_index=True
